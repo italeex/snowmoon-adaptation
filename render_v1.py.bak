@@ -1,0 +1,222 @@
+"""Snowmoon #34 — motion-graphics adaptation, Chapter 1 escape scene.
+
+Pipeline (must be open-sourced per bounty): renders frames procedurally with
+PIL/numpy, composites audio with ffmpeg. No AI image generation, no GPU.
+Text excerpts are from Snowmoon (GPL v3) by Vitalik Buterin.
+"""
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+W, H, FPS = 1920, 1080, 24
+OUT = "/mnt/hermes_data/snowmoon/frames"
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+
+def font(name, size):
+    return ImageFont.truetype(f"{FONT_DIR}/{name}", size)
+
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+def ease(t):
+    return t * t * (3 - 2 * t)
+
+def night_sky(w, h, t):
+    """Vertical gradient, deep indigo -> cold blue, with slow drift."""
+    top = np.array([8, 12, 34], dtype=float)
+    bot = np.array([28, 44, 78], dtype=float)
+    g = np.linspace(0, 1, h)[:, None]
+    img = top[None, None, :] * (1 - g[:, :, None]) + bot[None, None, :] * g[:, :, None]
+    img = np.repeat(img, w, axis=1)
+    # stars: fixed seed so output is deterministic
+    rng = np.random.default_rng(7)
+    sx = rng.integers(0, w, 260)
+    sy = rng.integers(0, int(h * 0.62), 260)
+    br = rng.random(260) * 0.5 + 0.5
+    for x, y, b in zip(sx, sy, br):
+        drift = int(t * 1.4)
+        xx = (x + drift) % w
+        img[y, xx] += 150 * b
+    return img
+
+def stone_wall(w, h, t, alpha=1.0):
+    """Blocks of large stone bricks, mid-medieval, no dust."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    bw, bh = 148, 62
+    for row in range(-1, h // bh + 2):
+        off = (row % 2) * bw // 2
+        for col in range(-1, w // bw + 2):
+            x = col * bw + off
+            y = row * bh
+            shade = 26 + ((col * 7 + row * 13) % 17)
+            d.rectangle([x, y, x + bw - 5, y + bh - 5],
+                        fill=(shade + 6, shade + 4, shade, int(255 * alpha)))
+            d.rectangle([x, y, x + bw - 5, y + 2],
+                        fill=(shade + 14, shade + 11, shade + 6, int(255 * alpha)))
+    return img
+
+def trees(w, h, t):
+    """Tall silhouettes flanking a foot path."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    rng = np.random.default_rng(3)
+    for side in (-1, 1):
+        x0 = w * 0.5 + side * w * 0.30
+        for i in range(7):
+            tx = x0 + side * (i * 46 + rng.random() * 24)
+            th = h * (0.62 + rng.random() * 0.34)
+            tw = 22 + rng.random() * 20
+            sway = np.sin(t * 0.7 + i) * 7
+            d.rectangle([tx - tw / 2 + sway, h - th, tx + tw / 2 + sway, h],
+                        fill=(14, 20, 18, 255))
+            for k in range(5):
+                cy = h - th + k * (th / 6)
+                cr = tw * (2.4 - k * 0.28)
+                d.ellipse([tx - cr + sway, cy - cr * 0.5, tx + cr + sway, cy + cr * 0.5],
+                          fill=(11, 17, 16, 255))
+    return img
+
+def path_perspective(w, h, t):
+    """Foot path narrowing to a vanishing point at the fire exit."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    vx, vy = w * 0.5, h * 0.46
+    bot_l, bot_r = w * 0.24, w * 0.76
+    d.polygon([(bot_l, h), (bot_r, h), (vx + 26, vy), (vx - 26, vy)],
+              fill=(38, 36, 40, 255))
+    for i in range(14):
+        f = i / 14
+        y = lerp(h, vy, f ** 1.7)
+        hw = lerp(w * 0.26, 8, f ** 1.7)
+        sh = int(lerp(46, 18, f))
+        d.rectangle([vx - hw, y - 3, vx + hw, y + 3],
+                    fill=(sh, sh - 4, sh - 8, 190))
+    return img
+
+def exit_glow(w, h, t, intensity):
+    """The fire exit he runs toward: green sign light."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    vx, vy = w * 0.5, h * 0.46
+    pulse = 0.82 + np.sin(t * 3.1) * 0.18
+    a = int(235 * intensity * pulse)
+    for r in range(300, 0, -14):
+        k = 1 - r / 300
+        d.ellipse([vx - r, vy - r * 0.72, vx + r, vy + r * 0.72],
+                  fill=(20, int(150 * k * intensity), 90, int(a * 0.03 * k)))
+    d.rounded_rectangle([vx - 62, vy - 34, vx + 62, vy + 8], radius=6,
+                        fill=(14, 40, 24, 255))
+    d.text((vx, vy - 14), "EXIT", font=font("DejaVuSans-Bold.ttf", 26),
+           fill=(120, 255, 170, a), anchor="mm")
+    return img
+
+def figure(x, y, scale, phase, robe, running):
+    """A person in a privacy robe; running = forward lean + stride."""
+    img = Image.new("RGBA", (260, 340), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    lean = 16 if running else 0
+    body = (46, 40, 62) if robe else (30, 34, 44)
+    # robe
+    d.polygon([(130 + lean, 96), (196, 250), (64, 250)], fill=body + (255,))
+    # head
+    d.ellipse([108 + lean, 52, 160 + lean, 106], fill=(196, 166, 142, 255))
+    # hood
+    d.pieslice([98 + lean, 40, 170 + lean, 116], 180, 360, fill=body + (255,))
+    # legs
+    stride = np.sin(phase * 9) * 34 if running else 0
+    d.line([130, 240, 108 - stride, 312], fill=body + (255,), width=17)
+    d.line([130, 240, 152 + stride, 312], fill=body + (255,), width=17)
+    # arm reaching
+    d.line([152, 130, 208 + stride * 0.5, 158], fill=body + (255,), width=13)
+    w = int(240 * scale); hh = int(340 * scale)
+    return img.resize((w, hh), Image.LANCZOS)
+
+def vignette(arr, strength=0.55):
+    h, w = arr.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    cx, cy = w / 2, h / 2
+    r = np.sqrt(((xx - cx) / cx) ** 2 + ((yy - cy) / cy) ** 2)
+    m = np.clip(1 - strength * np.clip(r - 0.42, 0, None) ** 1.7 * 2.4, 0, 1)
+    return (arr * m[:, :, None]).astype(np.uint8)
+
+def caption(draw, text, y, alpha, size=30):
+    if alpha <= 0.01:
+        return
+    f = font("DejaVuSerif.ttf", size)
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((W * 0.5, y), text, font=f, fill=(236, 232, 222, int(255 * alpha)), anchor="mm")
+    draw._image.alpha_composite(layer) if hasattr(draw, "_image") else None
+    return layer
+
+def build_shot(n, total, p_from, p_to):
+    """One shot: 10s of the man bolting for the exit."""
+    t = n / FPS
+    bg = night_sky(W, H, t)
+    base = Image.fromarray(bg.astype(np.uint8)).convert("RGBA")
+    base.alpha_composite(path_perspective(W, H, t))
+    wall = stone_wall(W, H, t, alpha=0.96)
+    wall.putalpha(wall.getchannel("A").point(lambda v: int(v * 0.92)))
+    base.alpha_composite(wall)
+    base.alpha_composite(trees(W, H, t))
+    glow_i = lerp(0.15, 1.0, ease(np.clip((t - 0.6) / 3.4, 0, 1)))
+    base.alpha_composite(exit_glow(W, H, t, glow_i))
+
+    # the runner: starts mid-frame left, accelerates to the exit
+    f = ease(np.clip(t / 5.2, 0, 1))
+    fx = lerp(W * 0.34, W * 0.5 - 40, f)
+    fy = lerp(H * 0.86, H * 0.60, f)
+    scale = lerp(0.92, 0.30, f)
+    fig = figure(0, 0, scale, t, robe=False, running=True)
+    base.alpha_composite(fig, (int(fx - fig.width / 2), int(fy - fig.height)))
+
+    # the Order member he leaves behind, one beat, then gone
+    if t < 2.4:
+        a = int(255 * np.clip(1 - t / 2.4, 0, 1))
+        g = figure(0, 0, 0.85, t * 0.2, robe=True, running=False)
+        g.putalpha(g.getchannel("A").point(lambda v: int(v * a / 255)))
+        base.alpha_composite(g, (int(W * 0.16), int(H * 0.80 - g.height)))
+
+    out = np.array(base.convert("RGB"))
+    out = vignette(out, 0.5 + 0.2 * (1 - f))
+    img = Image.fromarray(out)
+    return img
+
+LINES = [
+    (0.0,  3.4,  "Gladias was walking along a foot path, with tall trees\ntowering on both sides."),
+    (2.9,  6.6,  "A series of houses made out of large stone bricks lay\nbehind the trees on both sides,"),
+    (6.2, 10.0,  "medieval in style but without any of the junk, dust on\nthe ground, or other imperfections."),
+]
+
+def apply_caption(rgb, t):
+    for a, b, txt in LINES:
+        al = np.clip(min((t - a) / 0.7, (b - t) / 0.9), 0, 1)
+        if al <= 0.01:
+            continue
+        rgba = rgb.convert("RGBA")
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        f = font("DejaVuSerif.ttf", 34)
+        # shadow then text
+        for dy in (-2, 2):
+            d.text((W / 2, H * 0.80 + dy), txt, font=f, fill=(0, 0, 0, int(180 * al)), anchor="mm", align="center")
+        d.text((W / 2, H * 0.80), txt, font=f, fill=(238, 234, 224, int(255 * al)), anchor="mm", align="center")
+        rgba.alpha_composite(layer)
+        rgb = rgba.convert("RGB")
+    return rgb
+
+def main():
+    import os
+    os.makedirs(OUT, exist_ok=True)
+    dur = 10.0
+    n_tot = int(dur * FPS)
+    for n in range(n_tot):
+        t = n / FPS
+        img = build_shot(n, n_tot, 0, 1)
+        img = apply_caption(img, t)
+        img.convert("RGB").save(f"{OUT}/f{n:05d}.jpg", quality=92)
+        if n % 48 == 0:
+            print(f"  frame {n}/{n_tot}", flush=True)
+    print("frames done:", len(os.listdir(OUT)))
+
+if __name__ == "__main__":
+    main()
