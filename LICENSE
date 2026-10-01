@@ -1,0 +1,5 @@
+Snowmoon (c) Vitalik Buterin is licensed under GPL v3.
+This production pipeline is released under the GNU General Public License v3
+to match: https://www.gnu.org/licenses/gpl-3.0.txt
+Third-party software (PIL, numpy, ffmpeg, DejaVu) is not redistributed here
+and retains its own licence.
