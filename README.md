@@ -6,7 +6,9 @@ production pipeline required by the bounty: every non-commodity material used to
 make the film is here.
 
 **Film:** 47 seconds, four shots, 1920×1080 at 24 fps, H.264 + AAC.
-**Video:** <https://files.catbox.moe/rxple8.mp4> (7 099 564 bytes, verified: HTTP 206,
+**Video:** <https://files.catbox.moe/rxple8.mp4>
+
+**Watch it here:** [FILM.md](FILM.md) — the film is embedded and plays without login. The file is in this repo as `snowmoon_full.mp4` (6.8 MB). (7 099 564 bytes, verified: HTTP 206,
 `ftypisom`, 47.000 s, stereo AAC 160 k).
 (The first cut, a single 10-second shot, is at <https://files.catbox.moe/t0tsee.mp4>
 and its pipeline is preserved in `render_v1.py.bak`.)
